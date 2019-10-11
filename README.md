@@ -10,4 +10,4 @@ Other technical assumptions and abstractions are explained in the theory files. 
 * `abstEvm.thy` where the EVM semantics is based on the reference yellow papers:[yellow paper 2014](http://gavwood.com/Paper.pdf) and [yellow paper 2019](https://ethereum.github.io/yellowpaper/paper.pdf).
 * `abstEvm2.thy` where the EVM semantics is closer to the implementations of EVM.
 
-The difference between the two are explained in the comments at the beginning of the files.
+The subtle differences between the two are explained in the comments at the beginning of the files.
