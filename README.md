@@ -1,4 +1,4 @@
-# Ethereum Formal Semantics for Gas Consumption
+# Ethereum Formal Semantics for Gas Consumption Analysis
 
 This is a formal semantics of Ethereum Virtual Machine (EVM) specialized for gas consumption analysis. This formal model is used for proving termination of any contract on EVM. The model is defined and property are proved using the [Isabelle/HOL proof assistant](https://isabelle.in.tum.de/), more precisely [Isabelle/HOL 2018](http://isabelle.in.tum.de/website-Isabelle2018/). The only assumptions made on EVM are:
 
