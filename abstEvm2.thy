@@ -1,8 +1,8 @@
-(* Authors: Justine Sauvage and Thomas Genet *)
 theory abstEvm2
   imports Main 
 begin 
 
+(* Isabelle 2018 *)
 section \<open>Second EVM abstract semantics : implementations of EVM\<close>
 
 subsection \<open>Common assumptions for the two abstract semantics\<close>
@@ -34,6 +34,7 @@ text \<open>Assumptions coherent with EVM implementations:
   - A successful call can result into a gas refund.
   \<close>
 
+subsection \<open>Main datatypes\<close>
 
 (* Maximum call stack size *)
 consts
@@ -82,6 +83,7 @@ value "p1.(5)"
 
 type_synonym env= "contractName \<Rightarrow> program option"
 
+subsection \<open>Valid instructions, programs, environments, frames, stacks\<close>
 
 (* This predicates represents valid instructions, i.e., instructions with a strictly positive cost! *)
 fun valid_instr :: "instr \<Rightarrow> bool" 
@@ -177,6 +179,8 @@ fun valid_stack :: "call_stack \<Rightarrow> bool"
   "valid_stack ((Exception)#_) = False"|
   "valid_stack (Invalid_frame#l) = False"
 
+subsection \<open>Measure definition\<close>
+
 (* We associate gas for exception/Invalid frame for the termination measures *)
 fun get_gas_frame :: "frame \<Rightarrow> nat"
   where
@@ -252,8 +256,11 @@ lemma min_invalid_frame : "\<not>(i =[Invalid_frame] \<or> i = []\<or>(i=[Except
   apply (metis get_gas_frame.simps(1) gr0I in_measures(2) length_Cons length_greater_0_conv less_add_same_cancel2 list.size(4) list_order_def sum_gas.simps(1) sum_gas.simps(2))
   apply (metis One_nat_def comm_monoid_add_class.add_0 get_gas_frame.simps(1) in_measures(2) lessI less_add_same_cancel2 list.size(3) list.size(4) list_order_def not_gr_zero numeral_2_eq_2 sum_gas.simps(1) sum_gas.simps(2) top_frame_measure.simps(3) top_frame_measure.simps(5))
   by (metis comm_monoid_add_class.add_0 get_gas_frame.simps(1) gr0I in_measures(2) length_greater_0_conv less_add_same_cancel2 list.size(4) list_order_def sum_gas.simps(1) sum_gas.simps(2))
- 
+
+
 (*_______________________Semantics______________________________________________________________*)
+
+subsection \<open>Semantics\<close>
 
 (* The small step function of EVM *)
 fun smallstep ::"call_stack \<Rightarrow> call_stack"
@@ -306,6 +313,8 @@ fun smallstep ::"call_stack \<Rightarrow> call_stack"
                                                                              else  ((Ok ((g+gend),(pc+1),p,ef))#l)|
                                                   _ \<Rightarrow> [Invalid_frame] )"|
   "smallstep l = [Invalid_frame]"
+
+subsection \<open>Validity proof\<close>
 
 lemma validMember: "(valid_prog p) \<longrightarrow> (List.member p i) \<longrightarrow> (valid_instr i)"
   apply (induct p)
@@ -577,6 +586,8 @@ lemma validstack_any_valid_prog: "(valid_stack (Ok(g,pc,p,e)#l) \<and> (valid_pr
   apply auto
 done
 
+subsubsection \<open>Main Validity Theorem for one step of semantics\<close>
+
 lemma validstack_smallstep: "(valid_stack l)\<longrightarrow> (valid_stack (smallstep l))"
   apply (case_tac l)
   apply simp
@@ -650,7 +661,9 @@ lemma validstack_smallstep: "(valid_stack l)\<longrightarrow> (valid_stack (smal
  (* (4) Invalid frame on top *)
          by (simp add: invalid_invalid)
 
-function (sequential,domintros)  execute :: "call_stack \<Rightarrow> frame"
+subsection \<open>Semantics : complete execution\<close>
+
+function (sequential)  execute :: "call_stack \<Rightarrow> frame"
   where 
   "execute ([]) = Invalid_frame"|
   "execute ([Halt (g,e)]) = (Halt (g,e))"|
@@ -668,7 +681,11 @@ function (sequential,domintros)  execute :: "call_stack \<Rightarrow> frame"
 
 (*________________________________Termination proof________________________________________________*)
 
-(* _________________________ Some technical steps __________________________________________________*)
+subsubsection \<open>Termination proof\<close>
+
+(* _________________________ Some difficult lemmas __________________________________________________*)
+
+subsection \<open>Some technical lemmas\<close>
 
 
 lemma exceptionOrder: "(Exception#l,Ok(g,pc,p,e)#l) \<in> (measures list_order)"
@@ -697,6 +714,8 @@ lemma ok_call_possibilities: "(Call (gcall,ccall,name) = mynth p pc  \<and> (res
   apply auto
 done
 
+subsubsection \<open>Case 1 : Exception\<close>
+
 (*_________________________________Case 1 : Exception _____________________________________________*)
 
 lemma case1_smallstep_OK: "(res= (smallstep (Exception # (Ok (g,pc,p,e))# vb))) \<longrightarrow> (res=[Invalid_frame] \<or> (\<exists> pc2. res= Ok(g,pc2,p,e)#vb))"
@@ -722,7 +741,8 @@ lemma case1 : "(smallstep (Exception # v # vb), Exception # v # vb) \<in> (measu
   apply (simp add: min_invalid_frame)
   by (simp add: min_invalid_frame)
   
- 
+subsubsection \<open>Case 2 of termination proof\<close>
+
 (*___________________case 2 ______________________________________________________________________*)
 
 lemma case2_okTop: "((smallstep (Ok(g,pc,p,e) # va)) = res) \<longrightarrow>( 
@@ -757,12 +777,16 @@ lemma case2 : "(smallstep ((Ok (g,pc,p,e)) # va), (Ok (g,pc,p,e)) # va) \<in> (m
   using gas_order apply auto[1]
   using case2_okTop by blast
 
+subsubsection \<open>Case 3 of termination proof\<close>
+
 (*__________________case 3_________________________________________________________________________*)
 
 
 lemma case3 : "\<not> stack_lim < length (Invalid_frame # v # vb) \<longrightarrow> (smallstep (Invalid_frame # v # vb), Invalid_frame # v # vb) \<in> (measures list_order)"
   using min_invalid_frame by auto
-  
+
+subsubsection \<open>Case 4 of termination proof\<close>
+
 (*___________________case 4________________________________________________________________________*)
 
  
@@ -806,7 +830,10 @@ lemma case4: "(smallstep (v # vb # vc), v # vb # vc) \<in> (measures list_order)
   using case1 apply blast
   using case4_subcaseHalt apply auto[1]
   by (simp add: min_invalid_frame)
-  
+
+
+subsubsection \<open>The main termination theorem\<close>
+
 (* --------------------------- The termination theorem ---------------------------------------------*)
 
 termination execute
@@ -849,6 +876,7 @@ lemma finalSoundnessTheorem: "(valid_stack l \<and> (length l \<le> stack_lim)) 
   apply simp
   by (simp add: finalLength validstack_smallstep)
 
+subsection \<open>Test examples for the formal semantics\<close>
 
 (* For running test cases only... we define a default value for stack_lim *)
 (* ----------------------------------- Examples --------------------------------------- *)
@@ -870,17 +898,17 @@ value "exenv4(''c2'')"
 value "exenv4(''c3'')" 
 
 
+
 (* An example stack for running the test *)
 definition "exstack= [Ok(18,0,[(Call(1,10,''c2'')),Stop],exenv4)]"
 
-(* A maximal call stack size defined for tests *)
-lemma stack_lim[code]: "stack_lim=4"
-  sorry
+axiomatization
+  (* A maximal call stack size defined for tests *)
+  where stack_lim[code]: "stack_lim=4"
+  (* The function returning an arbitrary program (CREATE) for test only *)
+  and any_valid_program[code]: "any_valid_program x= [Stop]"
 
-(* The function returning an arbitrary program (CREATE) for test only *)
-lemma any_valid[code]: "any_valid_program x= [Stop]"
-  sorry
-
+value "testSem 0 exstack"
 value "testSem 0 exstack"
 value "testSem 1 exstack"
 value "testSem 2 exstack"
@@ -895,9 +923,5 @@ value "testSem 9 exstack"
 definition "invalidStack= [Exception,Ok(18,0,[],exenv4),Exception]"
 value "(testSem 1 invalidStack)"
 value "(testSem 2 invalidStack)"
-
-
-  
-
 
 end
