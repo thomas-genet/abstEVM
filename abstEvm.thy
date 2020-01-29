@@ -19,6 +19,9 @@ text \<open>
   Here are the abstractions that are done w.r.t. EVM semantics:
   - We make no difference between different calls w.r.t. gas consumption
   - We make no difference between all "local" operations, they have an arbitrary cost greater than 0
+  - We make no difference between all jump operations: Jump does not take any destination, the semantics
+    applies this instruction by jumping to an arbitrary position in the program (encodes both JUMP and
+    JUMPI)
   - The call stack size is bounded by a natural greater than 0 (called stack_lim) 
   - The create is represented by a call on an undefined contract name. It creates the contract 
     with an arbitrary program, and runs it.
@@ -63,11 +66,12 @@ datatype
      and the second one is the gas transferred to the called contract *)
   | Call "gas*gas*contractName"  (*g_base_mem(gas 1) = Cbase+Cmem on Yellow paper ; gcall(gas 2)= ccall *)
   | Stop (* Stop represent selfdestruct (suicide), stop, and return *)
-  | Jump "gas*pc"
+  | Jump "gas" (* Jump has no destination, the destination will be arbitrarily given in the semantics *)
+
 
 type_synonym program = "instr list"
 
-definition "p1= [Local 10,Call (1,1,''c1''),(Jump (5,0))]"
+definition "p1= [Local 10,Call (1,1,''c1''),(Jump (5))]"
 
 value "nth p1 0"
 value "nth p1 1"
@@ -92,7 +96,7 @@ type_synonym env= "contractName \<Rightarrow> program option"
 definition "(e1::env)= (\<lambda>x. None)"                 (* The empty environement *)
 definition "(e2::env)= e1 (''c1'':= Some [Nil])"   (* association between contract name "c1" and a [Nil] program *)
 definition "(e3::env)= e2 (''c2'':= Some [Local 10,Stop])"
-definition "(e4::env)= e3 (''c1'':= Some [Jump((5::gas),0)])"      (* we change the program associated to c1*)   
+definition "(e4::env)= e3 (''c1'':= Some [Jump((5::gas))])"      (* we change the program associated to c1*)   
 definition "(e5::env) = e4 (name_test := Some [Stop])"
 
 value "e4(''c1'')"  
@@ -110,7 +114,7 @@ fun valid_instr :: "instr \<Rightarrow> bool"
   "valid_instr (Stop) = True"|
   "valid_instr (Nil) = True"|
   "valid_instr (Call (g,gcall,name)) = ((g>0)\<and>(gcall>0))"|
-  "valid_instr (Jump(n,pc)) = (n>0)"
+  "valid_instr (Jump(n)) = (n>0)"
 
 (* Remark: Nil is a valid instruction whose execution will result into an exception *)
 
@@ -521,6 +525,11 @@ lemma min_exception : "(length i\<le>stack_lim) \<longrightarrow> \<not>(i =[Inv
 
 subsection \<open>Semantics\<close>
 
+(* To model the jump destination we use a function returning an arbitrary natural *)
+consts 
+  any_jump:: "nat \<Rightarrow> nat"
+
+
 (* The small step function of EVM *)
 fun smallstep ::"call_stack \<Rightarrow> call_stack"
   where
@@ -534,7 +543,7 @@ fun smallstep ::"call_stack \<Rightarrow> call_stack"
                                                                   else
                                                                     (Exception#l))
                                                        else ([Invalid_frame]) )|
-                                 Jump(n,pj) \<Rightarrow> if (n>0) then (
+                                 Jump(n) \<Rightarrow> if (n>0) then (let pj= any_jump 0 in
                                                            if (n\<le>g) then (if (pj<(length p)) then  
                                                                                           ((Ok (g-n,pj,p,e))#l)
                                                                                        else
@@ -914,14 +923,15 @@ lemma validstack_smallstep: "(valid_stack l)\<longrightarrow> (valid_stack (smal
          (* Jump case *)
          apply (case_tac x5)
          apply simp
-         apply (metis instr.distinct(19) less_numeral_extra(3) validInstr valid_instr.simps(5) validstack_Ok validstack_Ok_prog validstack_exception_step)
- (* (2) Exception on top *) 
-      apply (simp add: validstack_exception_top)
- (* (3) Halt on top *)
-          apply (simp add: validstack_halt_top)
- (* (4) Invalid frame on top *)
+         apply (metis instr.distinct(19) less_numeral_extra(3) validInstr valid_instr.simps(5) validstack_Ok_prog)
+         apply (smt instr.case(5) smallstep.simps(1) validstack_Ok validstack_exception_step zero_less_Suc)
+         (* (2) Exception on top *) 
+         apply (simp add: validstack_exception_top)
+         (* (3) Halt on top *)
+         apply (simp add: validstack_halt_top)
+         (* (4) Invalid frame on top *)
          by (simp add: invalid_invalid)
-
+         
 subsection \<open>Semantics : complete execution\<close>
 
 function (sequential)  execute :: "call_stack \<Rightarrow> frame"
@@ -972,40 +982,29 @@ lemma ok_local : "Local x = mynth p pc \<longrightarrow> n = length l \<longrigh
   by (metis (no_types) nth_Cons_0 ok_local_casesup ok_local_casesup_2 order_min_diff)
 
 
-lemma ok_jump_aux : " (n>0) \<longrightarrow> (n\<le>g)\<longrightarrow>(pj<(length p))\<longrightarrow> Jump(n,pj) = mynth p pc \<longrightarrow> (smallstep ((Ok (g,pc,p,e))#l)) = ((Ok (g-n,pj,p,e))#l)"
-  apply auto
-  by (smt instr.simps(28) old.prod.case)
-
-lemma ok_jump_case1 : " (n>0) \<longrightarrow> (n\<le>g)\<longrightarrow>(pj<(length p))\<longrightarrow> Jump(n,pj) = mynth p pc \<longrightarrow> (len = length l) \<longrightarrow> (order len (smallstep ((Ok (g,pc,p,e))#l))) < (order len ((Ok (g,pc,p,e))#l))"
-proof -
-  have "\<forall>n na. \<exists>nb. \<not> (na::nat) \<le> n \<or> na + nb = n"
-    by (metis (full_types) le_iff_add)
-  then obtain nn :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
-    f1: "\<And>n na. \<not> n \<le> na \<or> n + nn na n = na"
-    by metis
-  have "n + nn g n = g \<longrightarrow> 0 < n \<longrightarrow> n \<le> g \<longrightarrow> pj < length p \<longrightarrow> Jump (n, pj) = mynth  p pc \<longrightarrow> len = length l \<longrightarrow> order len (smallstep (Ok (g, pc, p, e) # l)) < order len (Ok (g, pc, p, e) # l)"
-    by (metis (no_types) add.left_neutral add_diff_cancel_left' add_mono_thms_linordered_field(1) get_gas_frame.simps(4) ok_jump_aux order_rev_length)
-  then show ?thesis
-    using f1 by blast
-qed
-
+lemma ok_jump_aux : " (n>0) \<longrightarrow> (n\<le>g)\<longrightarrow> Jump(n) = mynth p pc \<longrightarrow> ((\<exists> pj. (pj<(length p)) \<longrightarrow> (smallstep ((Ok (g,pc,p,e))#l)) = ((Ok (g-n,pj,p,e))#l)) \<or> ((smallstep ((Ok (g,pc,p,e))#l)) = Exception#l))"
+  by blast
   
-lemma ok_jump_subcase : " n> 0 \<longrightarrow> Jump (n,pj) = mynth p pc \<longrightarrow> len = length l \<longrightarrow> (order len (smallstep ((Ok (g,pc,p,e))#l))) < (order len ((Ok (g,pc,p,e))#l))"
+
+lemma ok_jump_case1 : " (n>0) \<longrightarrow> (n\<le>g)\<longrightarrow>(pj<(length p))\<longrightarrow> Jump(n) = mynth p pc \<longrightarrow> (len = length l) \<longrightarrow> (order len (smallstep ((Ok (g,pc,p,e))#l))) < (order len ((Ok (g,pc,p,e))#l))"
+  apply (case_tac "(\<exists> pj. (pj<(length p)) \<longrightarrow> (smallstep ((Ok (g,pc,p,e))#l)) = ((Ok (g-n,pj,p,e))#l))")
+  apply (smt One_nat_def add_mono_thms_linordered_field(1) get_gas_frame.simps(2) get_gas_frame.simps(4) instr.case(5) le_add_diff_inverse less_Suc_eq less_add_same_cancel2 not_add_less2 not_less_eq numeral_3_eq_3 order_rev_length smallstep.simps(1))
+  by blast
+
+
+lemma ok_jump_subcase : " n> 0 \<longrightarrow> Jump (n) = mynth p pc \<longrightarrow> len = length l \<longrightarrow> (order len (smallstep ((Ok (g,pc,p,e))#l))) < (order len ((Ok (g,pc,p,e))#l))"
   apply (case_tac "n\<le>g")
   apply (case_tac "pj < (length p) ")
   using ok_jump_case1 apply blast
-   apply simp
-  apply (smt One_nat_def get_gas_frame.simps(2) get_gas_frame.simps(4) instr.simps(28) length_rev less_Suc_eq linorder_neqE_nat not_add_less2 nth_append_length numeral_3_eq_3 old.prod.case order_rev_length)
-  apply auto
-  by (smt Nat.add_diff_assoc add_diff_cancel_left' diff_is_0_eq get_gas_frame.simps(2) get_gas_frame.simps(4) instr.simps(28) leI le_add1 length_rev less_add_Suc2 nth_append_length numeral_3_eq_3 order_rev_length plus_1_eq_Suc prod.simps(2) zero_order(2) zero_order(3))
-  
-  
+  apply (metis instr.distinct(19) mynth.simps ok_jump_case1)
+  by (smt One_nat_def get_gas_frame.simps(2) get_gas_frame.simps(4) instr.case(5) less_Suc_eq not_add_less2 not_less_eq numeral_3_eq_3 order_rev_length smallstep.simps(1))
+   
 
-lemma ok_jump_case_1_2 : " n> 0 \<longrightarrow> Jump (n,pj) = mynth p pc \<longrightarrow> len = length l\<longrightarrow> len < stack_lim \<longrightarrow>  ((smallstep ((Ok (g,pc,p,e))#l)),((Ok (g,pc,p,e))#l)) \<in> measures (list_order stack_lim)"
+lemma ok_jump_case_1_2 : " n> 0 \<longrightarrow> Jump (n) = mynth p pc \<longrightarrow> len = length l\<longrightarrow> len < stack_lim \<longrightarrow>  ((smallstep ((Ok (g,pc,p,e))#l)),((Ok (g,pc,p,e))#l)) \<in> measures (list_order stack_lim)"
   by (smt One_nat_def get_gas_frame.simps(2) get_gas_frame.simps(4) instr.simps(28) less_Suc_eq linorder_neqE_nat not_add_less2 numeral_3_eq_3 ok_jump_case1 old.prod.case order_list order_rev_length smallstep.simps(1))
 
 
-lemma ok_jump : "n>0 \<longrightarrow> Jump (n,pj) = mynth p pc \<longrightarrow> length l < stack_lim \<longrightarrow> ((smallstep ((Ok (g,pc,p,e))#l)),((Ok (g,pc,p,e))#l)) \<in> measures (list_order stack_lim)"
+lemma ok_jump : "n>0 \<longrightarrow> Jump (n) = mynth p pc \<longrightarrow> length l < stack_lim \<longrightarrow> ((smallstep ((Ok (g,pc,p,e))#l)),((Ok (g,pc,p,e))#l)) \<in> measures (list_order stack_lim)"
   apply (subst smallstep.simps)
   using ok_jump_case_1_2 by auto
   
@@ -1126,12 +1125,13 @@ lemma case2_okTop: "((smallstep (Ok(g,pc,p,e) # va)) = res) \<longrightarrow>(
   apply (metis mynth.simps ok_call_possibilities ok_stop_aux)
   apply simp
   apply (case_tac x5)
-  apply auto[1]
-  done
+   apply auto[1]
+  by (smt instr.case(5) le_add_diff_inverse less_add_same_cancel2 mynth.simps ok_stop_aux smallstep.simps(1))
+  
 
 lemma case2 : "\<not> stack_lim < length ((Ok (g,pc,p,e))  # va)\<longrightarrow> (smallstep ((Ok (g,pc,p,e)) # va), (Ok (g,pc,p,e)) # va) \<in> measures (list_order stack_lim)"
   apply (case_tac "(\<exists> g2 pc2 p2 e2. (smallstep (Ok(g,pc,p,e) # va)) = (Ok(g2,pc2,p2,e2)#Ok(g,pc,p,e)#va) \<and> g2<g)")
-   apply (case_tac "p!pc") (* Proof by case on the instruction at position pc in p *)
+  apply (case_tac "p!pc") (* Proof by case on the instruction at position pc in p *)
   apply (metis (no_types, lifting) length_Cons lessI mynth.elims nat_neq_iff ok_nil ok_stop_aux order_equal)
   apply (metis length_Cons lessI less_irrefl_nat mynth.elims ok_local ok_stop_aux order_equal)
   apply (case_tac x3)
@@ -1146,10 +1146,12 @@ lemma case2 : "\<not> stack_lim < length ((Ok (g,pc,p,e))  # va)\<longrightarrow
   apply (case_tac "(smallstep (Ok(g,pc,p,e) # va)) = (Halt (g,e)#va)")
   apply (metis add_less_cancel_left get_gas_frame.simps(3) get_gas_frame.simps(4) leI le_imp_less_Suc length_Cons lessI numeral_2_eq_2 numeral_3_eq_3 order_list)
   apply (case_tac "(\<exists> g2 pc2. (smallstep (Ok(g,pc,p,e) # va)) = (Ok(g2,pc2,p,e)#va) \<and> g2<g)")
-  apply (metis (no_types, lifting) add_lessD1 add_mono_thms_linordered_field(1) antisym_conv3 get_gas_frame.simps(4) length_Cons lessI list.size(4) order_list) 
-  using case2_okTop apply blast
-  done 
-
+  apply (metis (no_types, lifting) add_lessD1 add_mono_thms_linordered_field(1) antisym_conv3 get_gas_frame.simps(4) length_Cons lessI list.size(4) order_list)
+   apply (metis length_Cons mynth.simps not_less_eq ok_jump ok_stop_aux zero_less_Suc)
+  apply (case_tac "((smallstep (Ok(g,pc,p,e) # va)) = [Invalid_frame])\<or> ((smallstep (Ok(g,pc,p,e) # va)) = (Exception#va)) \<or> ((smallstep (Ok(g,pc,p,e) # va)) = (Halt (g,e)#va)) \<or> (\<exists> g2 pc2. (smallstep (Ok(g,pc,p,e) # va)) = (Ok(g2,pc2,p,e)#va) \<and> g2<g)")
+  using min_invalid_frame order_list apply auto[1]
+  using case2_okTop by blast
+  
 subsubsection \<open>Case 3 of termination proof\<close>
 
 (*__________________case 3_________________________________________________________________________*)
@@ -1227,22 +1229,18 @@ termination execute
 (* --------------------------- The soundness theorem ---------------------------------------------*)
 lemma finalLength : "(length l\<le> stack_lim) \<longrightarrow> (length (smallstep l)\<le> stack_lim)"
   apply (induct l rule:smallstep.induct)
-  apply auto
+              apply auto
   apply (case_tac "p!pc")
   apply auto
   apply (case_tac "e b")
   apply auto
-  apply (case_tac "p!pc")
-  apply auto
-  apply (case_tac "p!pc")
-  apply auto
   apply (metis Suc_leI length_Cons)
+  apply (smt length_Cons)
   apply (case_tac "p!pc")
   apply auto
   apply (case_tac "p!pc")
   apply auto
-  by (simp add: Suc_leI min_stack_lim)
-
+  by (simp add: Suc_le_eq min_stack_lim)
 
 lemma finalSoundnessTheorem: "(valid_stack l \<and> (length l \<le> stack_lim)) \<longrightarrow> (valid_stack [(execute l)])"
   apply (induct l rule:execute.induct)
@@ -1256,7 +1254,6 @@ lemma finalSoundnessTheorem: "(valid_stack l \<and> (length l \<le> stack_lim)) 
   apply simp
   by (simp add: finalLength validstack_smallstep)
 
-subsection \<open>Test examples for the formal semantics\<close>
 
 (* For running test cases only... we define a default value for stack_lim *)
 (* ----------------------------------- Examples --------------------------------------- *)
@@ -1286,6 +1283,8 @@ axiomatization
   where stack_lim[code]: "stack_lim=4"
   (* The function returning an arbitrary program (CREATE) for test only *)
   and any_valid_program[code]: "any_valid_program x= [Stop]"
+  (* The function returning an arbitrary jump destination for test only *)
+  and any_jump[code]: "any_jump x = 0"
 
 value "testSem 0 exstack"
 value "testSem 0 exstack"

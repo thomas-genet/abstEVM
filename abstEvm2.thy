@@ -18,6 +18,9 @@ text \<open>
   Here are the abstractions that are done w.r.t. EVM semantics:
   - We make no difference between different calls w.r.t. gas consumption
   - We make no difference between all "local" operations, they have an arbitrary cost greater than 0
+  - We make no difference between all jump operations: Jump does not take any destination, the semantics
+    applies this instruction by jumping to an arbitrary position in the program (encodes both JUMP and
+    JUMPI)
   - The call stack size is bounded by a natural greater than 0 (called stack_lim) 
   - The create is represented by a call on an undefined contract name. It creates the contract 
     with an arbitrary program, and runs it.
@@ -59,11 +62,11 @@ datatype
      and the second one is the gas transferred to the called contract *)
   | Call "gas*gas*contractName"  (*g_base_mem(gas 1) = Cbase+Cmem on Yellow paper ; gcall(gas 2)= ccall *)
   | Stop (* Stop represent selfdestruct (suicide), stop, and return *)
-  | Jump "gas*pc"
+  | Jump "gas" (* Jump has no destination, the destination will be arbitrarily given in the semantics *)
 
 type_synonym program = "instr list"
 
-definition "p1= [Local 10,Call (1,1,''c1''),(Jump (5,0))]"
+definition "p1= [Local 10,Call (1,1,''c1''),(Jump (5))]"
 
 value "nth p1 0"
 value "nth p1 1"
@@ -92,7 +95,7 @@ fun valid_instr :: "instr \<Rightarrow> bool"
   "valid_instr (Stop) = True"|
   "valid_instr (Nil) = True"|
   "valid_instr (Call (g,gcall,name)) = ((g>0)\<and>(gcall>0))"|
-  "valid_instr (Jump(n,pc)) = (n>0)"
+  "valid_instr (Jump(n)) = (n>0)"
 
 (* Remark: Nil is a valid instruction whose execution will result into an exception *)
 
@@ -262,6 +265,12 @@ lemma min_invalid_frame : "\<not>(i =[Invalid_frame] \<or> i = []\<or>(i=[Except
 
 subsection \<open>Semantics\<close>
 
+
+(* To model the jump destination we use a function returning an arbitrary natural *)
+consts 
+  any_jump:: "nat \<Rightarrow> nat"
+
+
 (* The small step function of EVM *)
 fun smallstep ::"call_stack \<Rightarrow> call_stack"
   where
@@ -275,7 +284,7 @@ fun smallstep ::"call_stack \<Rightarrow> call_stack"
                                                                   else
                                                                     (Exception#l))
                                                        else ([Invalid_frame]) )|
-                                 Jump(n,pj) \<Rightarrow> if (n>0) then (
+                                 Jump(n) \<Rightarrow> if (n>0) then (let pj= any_jump 0 in
                                                            if (n\<le>g) then (if (pj<(length p)) then  
                                                                                           ((Ok (g-n,pj,p,e))#l)
                                                                                        else
@@ -653,10 +662,13 @@ lemma validstack_smallstep: "(valid_stack l)\<longrightarrow> (valid_stack (smal
          (* Jump case *)
          apply (case_tac x5)
          apply simp
-         apply (metis instr.distinct(19) less_numeral_extra(3) validInstr valid_instr.simps(5) validstack_Ok validstack_Ok_prog validstack_exception_step)
- (* (2) Exception on top *) 
+         apply (metis (full_types) instr.distinct(19) less_numeral_extra(3) validInstr valid_instr.simps(5) validstack_Ok_prog)
+         apply (smt instr.case(5) smallstep.simps(1) validstack_Ok validstack_exception_step zero_less_Suc)
+         
+ (* (2) Exception on top *)
       apply (simp add: validstack_exception_top)
  (* (3) Halt on top *)
+        
           apply (simp add: validstack_halt_top)
  (* (4) Invalid frame on top *)
          by (simp add: invalid_invalid)
@@ -756,13 +768,15 @@ lemma case2_okTop: "((smallstep (Ok(g,pc,p,e) # va)) = res) \<longrightarrow>(
   apply auto[1]
   apply (case_tac x3)
   apply (case_tac "e c")
-  apply auto[1]
+     apply auto[1]
   apply (metis (no_types, lifting) add_diff_inverse_nat add_mono_thms_linordered_field(1) less_add_same_cancel2)
+  apply simp
   apply auto[1]
   apply auto[1]
   apply (case_tac x5)
   apply auto[1]
-  done
+  apply auto
+  by (smt le_add_diff_inverse less_add_same_cancel2 zero_less_Suc)
 
 lemma case2 : "(smallstep ((Ok (g,pc,p,e)) # va), (Ok (g,pc,p,e)) # va) \<in> (measures list_order)"
   apply (case_tac "(\<exists> g2 g3 pc2 p2 e2. (smallstep (Ok(g,pc,p,e) # va)) = (Ok(g2,pc2,p2,e2)#Ok(g3,pc,p,e)#va) \<and> g2+g3<g)")
@@ -849,19 +863,16 @@ lemma finalLength : "(length l\<le> stack_lim) \<longrightarrow> (length (smalls
   apply (induct l rule:smallstep.induct)
   apply auto
   apply (case_tac "p!pc")
-  apply auto
+         apply auto
   apply (case_tac "e b")
-  apply auto
-  apply (case_tac "p!pc")
-  apply auto
-  apply (case_tac "p!pc")
-  apply auto
+       apply auto
   apply (metis Suc_leI length_Cons)
-  apply (case_tac "p!pc")
+  apply (smt length_Cons)
+   apply (case_tac "p!pc")
   apply auto
   apply (case_tac "p!pc")
   apply auto
-  by (simp add: Suc_leI min_stack_lim)
+  by (simp add: Suc_le_eq min_stack_lim)
 
 
 lemma finalSoundnessTheorem: "(valid_stack l \<and> (length l \<le> stack_lim)) \<longrightarrow> (valid_stack [(execute l)])"
@@ -907,6 +918,8 @@ axiomatization
   where stack_lim[code]: "stack_lim=4"
   (* The function returning an arbitrary program (CREATE) for test only *)
   and any_valid_program[code]: "any_valid_program x= [Stop]"
+  (* The function returning an arbitrary jump destination for test only *)
+  and any_jump[code]: "any_jump x = 0"
 
 value "testSem 0 exstack"
 value "testSem 0 exstack"
